@@ -1,5 +1,7 @@
 # Short Finance for Android
 
+Short description: Android app for offline shared expense tracking with project-based accounting and Bluetooth sync.
+
 > Free and open-source software. You can use, modify, and distribute this project under the MIT License.
 >
 > Companion repositories:
