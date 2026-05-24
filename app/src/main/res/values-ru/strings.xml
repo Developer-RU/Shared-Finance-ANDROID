@@ -13,7 +13,9 @@
     <string name="save">Сохранить</string>
     <string name="cancel">Отмена</string>
     <string name="delete">Удалить</string>
+    <string name="rename">Переименовать</string>
     <string name="edit">Редактировать</string>
+    <string name="ok">Ок</string>
     <string name="archive">Архив</string>
     <string name="open">Открыть</string>
     <string name="choose">Выбрать</string>
@@ -47,6 +49,7 @@
     <string name="history_export_conflicts_button">Экспортировать конфликты (JSON)</string>
     <string name="history_export_done">Конфликты экспортированы</string>
     <string name="history_export_error">Не удалось экспортировать конфликты</string>
+    <string name="open_sync_logs">Открыть логи синхронизации</string>
 
     <string name="projects_title">Проекты</string>
     <string name="project_title">Название проекта</string>
@@ -67,6 +70,10 @@
 
     <string name="project_not_found">Проект не найден</string>
     <string name="edit_project">Редактирование проекта</string>
+    <string name="delete_project_title">Удаление проекта</string>
+    <string name="project_pin_action">Закрепить</string>
+    <string name="project_unpin_action">Открепить</string>
+    <string name="delete_project_cascade_message">Все расходы проекта будут удалены. Участники, которые не используются в других проектах, также будут удалены.</string>
     <string name="start_editing">Начать редактирование</string>
     <string name="project_edit_title">Редактирование проекта</string>
     <string name="project_save_button">Сохранить</string>
@@ -89,6 +96,10 @@
     <string name="participant_name">Имя</string>
     <string name="participant_contribution">Вклад</string>
     <string name="add_participant">Добавить участника</string>
+    <string name="rename_participant">Переименовать участника</string>
+    <string name="delete_participant_title">Удаление участника</string>
+    <string name="delete_participant_message">Удалить этого участника?</string>
+    <string name="delete_participant_with_expenses_message">У участника есть расходы в проекте. При удалении связанные расходы также будут удалены. Продолжить?</string>
     <string name="contribution_line">Вклад: %1$s</string>
 
     <string name="expenses_title">Расходы</string>
@@ -98,6 +109,10 @@
     <string name="expense_participant">Участник</string>
     <string name="selected_participant">Выбран участник: %1$s</string>
     <string name="add_expense">Добавить расход</string>
+    <string name="edit_expense">Редактирование расхода</string>
+    <string name="expense_validation_amount_positive">Название обязательно, сумма должна быть больше нуля.</string>
+    <string name="expense_validation_participant_not_in_project">Не удалось обновить расход для выбранного участника в этом проекте.</string>
+    <string name="expense_validation_not_found">Расход не найден.</string>
 
     <string name="balance_title">Баланс</string>
     <string name="total_contribution">Общий вклад: %1$s</string>
@@ -166,13 +181,20 @@
     <string name="sync_state_idle">Ожидание</string>
     <string name="sync_state_scanning">Поиск...</string>
     <string name="sync_state_scan_stopped">Поиск остановлен</string>
+    <string name="sync_state_connecting">Подключение...</string>
     <string name="sync_state_connected">Подключено</string>
+    <string name="sync_state_transferring">Передача данных...</string>
+    <string name="sync_state_waiting_response">Ожидание ответа...</string>
     <string name="sync_state_conflicts_detected">Обнаружено конфликтов: %1$d</string>
     <string name="sync_state_preview_ready">Предпросмотр готов</string>
     <string name="sync_state_completed">Синхронизация завершена</string>
     <string name="sync_state_completed_with_decisions">Синхронизация завершена с решениями</string>
     <string name="sync_state_missing_decisions">Выберите решение для каждого конфликта</string>
     <string name="sync_state_transfer_failed">Не удалось получить удаленные данные</string>
+    <string name="sync_permissions_hint_title">Нужны разрешения</string>
+    <string name="sync_permissions_hint_message">Для стабильного поиска предоставьте: %1$s.</string>
+    <string name="sync_permission_nearby_devices">Устройства поблизости</string>
+    <string name="sync_permission_location">Геолокация</string>
     <string name="sync_decision_progress">Решения: %1$d/%2$d</string>
     <string name="sync_decision_pending">Решение: не выбрано</string>
     <string name="sync_decision_local">Решение: оставить локальное</string>
@@ -199,6 +221,29 @@
     <string name="language_pt_br">Португальский (Бразилия)</string>
     <string name="language_ja">日本語</string>
     <string name="settings_face_id">Face ID</string>
+    <string name="settings_app_lock">Блокировка приложения</string>
+    <string name="settings_biometric">Биометрическая аутентификация</string>
+    <string name="settings_pin_set">Установить PIN-код</string>
+    <string name="settings_pin_change">Изменить PIN-код</string>
+    <string name="settings_pin_remove">Удалить PIN-код</string>
+    <string name="settings_pin_dialog_title">PIN-код</string>
+    <string name="settings_pin_dialog_message">Введите PIN-код из 4-8 цифр.</string>
+    <string name="settings_pin_input_label">PIN-код</string>
+    <string name="settings_pin_invalid">PIN должен содержать 4-8 цифр.</string>
+    <string name="settings_pattern_set">Установить графический ключ</string>
+    <string name="settings_pattern_change">Изменить графический ключ</string>
+    <string name="settings_pattern_remove">Удалить графический ключ</string>
+    <string name="settings_pattern_dialog_title">Графический ключ</string>
+    <string name="settings_pattern_dialog_message">Нарисуйте графический ключ минимум из 4 точек.</string>
+    <string name="settings_pattern_confirm_message">Повторите тот же графический ключ для подтверждения.</string>
+    <string name="settings_pattern_invalid">Ключ должен содержать минимум 4 точки.</string>
+    <string name="settings_pattern_mismatch">Ключи не совпадают. Попробуйте снова.</string>
+    <string name="settings_pattern_clear">Очистить ключ</string>
+    <string name="security_unlock_title">Разблокируйте Shared Finance</string>
+    <string name="security_unlock_subtitle">Подтвердите личность для продолжения.</string>
+    <string name="security_unlock_button">Разблокировать</string>
+    <string name="security_unlock_pin_button">Использовать PIN-код</string>
+    <string name="security_unlock_pattern_button">Использовать графический ключ</string>
     <string name="settings_export_json">Экспорт данных (JSON)</string>
     <string name="settings_import_json">Импорт данных (JSON)</string>
     <string name="settings_export_done">Экспорт завершен</string>

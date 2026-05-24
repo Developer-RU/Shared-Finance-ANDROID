@@ -80,25 +80,3 @@ enum class SyncResultType {
     CONFLICT,
     FAILED
 }
-
-data class ConflictResolutionLogEntry(
-    val id: UUID = UUID.randomUUID(),
-    val date: Date = Date(),
-    val entityName: String,
-    val entityId: UUID,
-    val localValue: String,
-    val remoteValue: String,
-    val decision: ConflictResolutionDecision,
-    val decisionSource: ConflictDecisionSource,
-    val isApplied: Boolean
-)
-
-enum class ConflictResolutionDecision {
-    ACCEPT_REMOTE,
-    KEEP_LOCAL
-}
-
-enum class ConflictDecisionSource {
-    MANUAL,
-    AUTOMATIC
-}

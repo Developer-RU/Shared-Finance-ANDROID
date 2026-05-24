@@ -9,10 +9,9 @@ import androidx.room.RoomDatabase
         ParticipantEntity::class,
         ExpenseEntity::class,
         HistoryEntity::class,
-        SyncLogEntity::class,
-        ConflictResolutionLogEntity::class
+        SyncLogEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class SharedFinanceDatabase : RoomDatabase() {

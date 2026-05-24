@@ -1,18 +1,13 @@
 package com.sharedfinance.data.repository
 
 import android.content.Context
-import android.util.Log
 import com.google.gson.Gson
 import com.sharedfinance.model.ChangeHistoryEntry
-import com.sharedfinance.model.ConflictDecisionSource
-import com.sharedfinance.model.ConflictResolutionDecision
-import com.sharedfinance.model.ConflictResolutionLogEntry
 import com.sharedfinance.model.Expense
 import com.sharedfinance.model.HistoryOperationType
 import com.sharedfinance.model.Participant
 import com.sharedfinance.model.Project
-import com.sharedfinance.model.ResolvedSyncDecision
-import com.sharedfinance.model.SyncConflict
+import com.sharedfinance.model.ProjectStatus
 import com.sharedfinance.model.SyncLogEntry
 import com.sharedfinance.model.SyncPayload
 import com.sharedfinance.model.SyncResultType
@@ -30,15 +25,13 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
     private val expenses = MutableStateFlow<List<Expense>>(emptyList())
     private val history = MutableStateFlow<List<ChangeHistoryEntry>>(emptyList())
     private val syncLogs = MutableStateFlow<List<SyncLogEntry>>(emptyList())
-    private val conflictLog = MutableStateFlow<List<ConflictResolutionLogEntry>>(emptyList())
 
     private data class PersistedState(
         val projects: List<Project> = emptyList(),
         val participants: List<Participant> = emptyList(),
         val expenses: List<Expense> = emptyList(),
         val history: List<ChangeHistoryEntry> = emptyList(),
-        val syncLogs: List<SyncLogEntry> = emptyList(),
-        val conflictLog: List<ConflictResolutionLogEntry> = emptyList()
+        val syncLogs: List<SyncLogEntry> = emptyList()
     )
 
     init {
@@ -46,32 +39,19 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
     }
 
     override fun observeProjects(): Flow<List<Project>> = projects
-
     override fun observeParticipants(): Flow<List<Participant>> = participants
-
     override fun observeExpenses(): Flow<List<Expense>> = expenses
-
     override fun observeHistory(): Flow<List<ChangeHistoryEntry>> = history
-
     override fun observeSyncLogs(): Flow<List<SyncLogEntry>> = syncLogs
-
-    override fun observeConflictResolutionLogs(): Flow<List<ConflictResolutionLogEntry>> = conflictLog
 
     override fun appendSyncLog(entry: SyncLogEntry) {
         syncLogs.update { it + entry }
         persistState()
     }
 
-    override fun appendConflictResolutionLog(entry: ConflictResolutionLogEntry) {
-        conflictLog.update { it + entry }
-        persistState()
-    }
-
     override suspend fun createProject(title: String, details: String) {
-        val project = Project(title = title, details = details)
-        projects.update { it + project }
+        projects.update { it + Project(title = title, details = details) }
         appendHistory("Project created: $title", HistoryOperationType.CREATE)
-        persistState()
     }
 
     override suspend fun updateProject(project: Project) {
@@ -79,7 +59,7 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
             current.map {
                 if (it.id == project.id) {
                     project.copy(
-                        recordVersion = maxOf(it.recordVersion + 1, project.recordVersion),
+                        recordVersion = maxOf(project.recordVersion, it.recordVersion + 1),
                         updatedAt = Date()
                     )
                 } else {
@@ -88,31 +68,33 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
             }
         }
         appendHistory("Project updated: ${project.title}", HistoryOperationType.UPDATE)
-        persistState()
     }
 
     override suspend fun archiveProject(projectId: UUID) {
         val project = projects.value.firstOrNull { it.id == projectId } ?: return
-        updateProject(project.copy(status = com.sharedfinance.model.ProjectStatus.ARCHIVED))
+        val status = if (project.status == ProjectStatus.ACTIVE) ProjectStatus.ARCHIVED else ProjectStatus.ACTIVE
+        updateProject(project.copy(status = status))
     }
 
     override suspend fun deleteProject(projectId: UUID) {
         val project = projects.value.firstOrNull { it.id == projectId } ?: return
-        projects.update { list -> list.filterNot { it.id == projectId } }
+        val remainingProjects = projects.value.filterNot { it.id == projectId }
+        val removedExpenseIds = expenses.value.filter { it.projectId == projectId }.map { it.id }.toSet()
+        val remainingExpenses = expenses.value.filterNot { it.id in removedExpenseIds }
+        val participantIdsInProject = project.participantIds.toSet()
+        val participantIdsStillReferenced = remainingProjects.flatMap { it.participantIds }.toSet()
+        val orphanParticipantIds = participantIdsInProject.filterNot { it in participantIdsStillReferenced }.toSet()
+        val remainingParticipants = participants.value.filterNot { it.id in orphanParticipantIds }
 
-        val participantIds = project.participantIds.toSet()
-        val expenseIds = project.expenseIds.toSet()
-        participants.update { list -> list.filterNot { it.id in participantIds } }
-        expenses.update { list -> list.filterNot { it.id in expenseIds || it.projectId == projectId } }
-
+        projects.value = remainingProjects
+        expenses.value = remainingExpenses
+        participants.value = remainingParticipants
         appendHistory("Project deleted: ${project.title}", HistoryOperationType.DELETE)
-        persistState()
     }
 
     override suspend fun createParticipant(name: String, projectId: UUID?, contributionAmount: Double) {
         val participant = Participant(name = name, contributionAmount = contributionAmount)
         participants.update { it + participant }
-
         if (projectId != null) {
             projects.update { current ->
                 current.map { project ->
@@ -128,21 +110,63 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
                 }
             }
         }
-
         appendHistory("Participant added: $name", HistoryOperationType.CREATE)
-        persistState()
     }
 
-    override suspend fun deleteParticipant(participantId: UUID, projectId: UUID?) {
-        val participant = participants.value.firstOrNull { it.id == participantId } ?: return
-        participants.update { it.filterNot { item -> item.id == participantId } }
+    override suspend fun updateParticipant(participant: Participant, projectId: UUID?) {
+        participants.update { current ->
+            current.map {
+                if (it.id == participant.id) {
+                    participant.copy(
+                        recordVersion = maxOf(participant.recordVersion, it.recordVersion + 1),
+                        updatedAt = Date()
+                    )
+                } else {
+                    it
+                }
+            }
+        }
+        appendHistory("Participant updated: ${participant.name}", HistoryOperationType.UPDATE)
+    }
+
+    override suspend fun deleteParticipant(participantId: UUID, projectId: UUID?): Boolean {
+        val participant = participants.value.firstOrNull { it.id == participantId } ?: return false
+        val allExpenses = expenses.value
+        val participantHasExpensesAnywhere = allExpenses.any { it.participantId == participantId }
+        val participantReferencedByAnyProject = projects.value.any { participantId in it.participantIds }
+        val targetProjectIds = if (projectId == null) {
+            projects.value.filter { participantId in it.participantIds }.map { it.id }.toSet()
+        } else {
+            setOf(projectId)
+        }
+
+        if (targetProjectIds.isEmpty()) {
+            if (participantReferencedByAnyProject || participantHasExpensesAnywhere) return false
+            participants.value = participants.value.filterNot { it.id == participantId }
+            appendHistory("Participant deleted: ${participant.name}", HistoryOperationType.DELETE)
+            return true
+        }
+
+        val affectedProjectIds = projects.value
+            .filter { project ->
+                project.id in targetProjectIds && (
+                    participantId in project.participantIds ||
+                        allExpenses.any { expense -> expense.projectId == project.id && expense.participantId == participantId }
+                    )
+            }
+            .map { it.id }
+            .toSet()
+        if (affectedProjectIds.isEmpty()) return false
+
+        val expensesToDelete = allExpenses.filter { it.participantId == participantId && it.projectId in affectedProjectIds }
+        expenses.value = expenses.value.filterNot { it.id in expensesToDelete.map { exp -> exp.id }.toSet() }
 
         projects.update { current ->
             current.map { project ->
-                val shouldTouch = participantId in project.participantIds && (projectId == null || project.id == projectId)
-                if (shouldTouch) {
+                if (project.id in affectedProjectIds) {
                     project.copy(
                         participantIds = project.participantIds.filterNot { it == participantId },
+                        expenseIds = project.expenseIds.filterNot { expId -> expensesToDelete.any { it.id == expId } },
                         recordVersion = project.recordVersion + 1,
                         updatedAt = Date()
                     )
@@ -150,51 +174,79 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
                     project
                 }
             }
+        }
+
+        val isStillReferenced = projects.value.any { participantId in it.participantIds }
+        if (!isStillReferenced) {
+            participants.value = participants.value.filterNot { it.id == participantId }
         }
 
         appendHistory("Participant deleted: ${participant.name}", HistoryOperationType.DELETE)
-        persistState()
+        return true
     }
 
     override suspend fun createExpense(expense: Expense) {
-        expenses.update { it + expense.copy(updatedAt = Date()) }
+        val project = projects.value.firstOrNull { it.id == expense.projectId } ?: return
+        val participant = participants.value.firstOrNull { it.id == expense.participantId } ?: return
+        if (participant.id !in project.participantIds || expense.amount <= 0.0) return
 
+        expenses.update { it + expense.copy(updatedAt = Date()) }
         projects.update { current ->
-            current.map { project ->
-                if (project.id == expense.projectId && expense.id !in project.expenseIds) {
-                    project.copy(
-                        expenseIds = project.expenseIds + expense.id,
-                        recordVersion = project.recordVersion + 1,
+            current.map {
+                if (it.id == expense.projectId && expense.id !in it.expenseIds) {
+                    it.copy(
+                        expenseIds = it.expenseIds + expense.id,
+                        recordVersion = it.recordVersion + 1,
                         updatedAt = Date()
                     )
                 } else {
-                    project
+                    it
                 }
             }
         }
-
         appendHistory("Expense added: ${expense.title}", HistoryOperationType.CREATE)
-        persistState()
+    }
+
+    override suspend fun updateExpense(expense: Expense): Boolean {
+        if (expense.amount <= 0.0) return false
+        val project = projects.value.firstOrNull { it.id == expense.projectId } ?: return false
+        val participant = participants.value.firstOrNull { it.id == expense.participantId } ?: return false
+        if (participant.id !in project.participantIds) return false
+
+        val current = expenses.value.firstOrNull { it.id == expense.id } ?: return false
+        expenses.update { list ->
+            list.map {
+                if (it.id == expense.id) {
+                    expense.copy(
+                        recordVersion = maxOf(expense.recordVersion, current.recordVersion + 1),
+                        updatedAt = Date()
+                    )
+                } else {
+                    it
+                }
+            }
+        }
+        appendHistory("Expense updated: ${expense.title}", HistoryOperationType.UPDATE)
+        return true
     }
 
     override suspend fun deleteExpense(expenseId: UUID) {
         val expense = expenses.value.firstOrNull { it.id == expenseId } ?: return
-        expenses.update { list -> list.filterNot { it.id == expenseId } }
+        expenses.value = expenses.value.filterNot { it.id == expenseId }
         projects.update { current ->
-            current.map { project ->
-                if (expenseId in project.expenseIds) {
-                    project.copy(
-                        expenseIds = project.expenseIds.filterNot { it == expenseId },
-                        recordVersion = project.recordVersion + 1,
+            current.map {
+                if (expenseId in it.expenseIds) {
+                    it.copy(
+                        expenseIds = it.expenseIds.filterNot { id -> id == expenseId },
+                        recordVersion = it.recordVersion + 1,
                         updatedAt = Date()
                     )
                 } else {
-                    project
+                    it
                 }
             }
         }
         appendHistory("Expense deleted: ${expense.title}", HistoryOperationType.DELETE)
-        persistState()
     }
 
     override suspend fun exportPayload(): SyncPayload {
@@ -209,129 +261,35 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
     }
 
     override suspend fun importPayload(payload: SyncPayload) {
-        val mergedParticipants = mergeRecords(participants.value, payload.participants, { it.id }, { it.recordVersion }, { it.updatedAt })
-        val mergedExpenses = mergeRecords(expenses.value, payload.expenses, { it.id }, { it.recordVersion }, { it.updatedAt })
-        projects.value = mergeProjects(payload.projects, emptySet(), mergedExpenses)
-        participants.value = mergedParticipants
-        expenses.value = mergedExpenses
+        participants.value = mergeRecords(participants.value, payload.participants, { it.id }, { it.recordVersion }, { it.updatedAt })
+        expenses.value = mergeRecords(expenses.value, payload.expenses, { it.id }, { it.recordVersion }, { it.updatedAt })
+        projects.value = mergeProjects(projects.value, payload.projects, expenses.value)
         history.value = mergeRecords(history.value, payload.history, { it.id }, { it.recordVersion }, { it.date })
+        syncLogs.value = mergeRecords(syncLogs.value, payload.syncLogs, { it.id }, { 1 }, { it.date })
         persistState()
     }
 
-    override suspend fun buildSyncPayload(): SyncPayload {
-        return exportPayload()
-    }
+    override suspend fun buildSyncPayload(): SyncPayload = exportPayload()
 
-    override suspend fun detectConflicts(remote: SyncPayload): List<SyncConflict> {
-        val localProjectsById = projects.value.associateBy { it.id }
-        val conflicts = mutableListOf<SyncConflict>()
-        remote.projects.forEach { remoteProject ->
-            val localProject = localProjectsById[remoteProject.id] ?: return@forEach
-            if (remoteProject.recordVersion != localProject.recordVersion && remoteProject.updatedAt != localProject.updatedAt) {
-                conflicts += SyncConflict(
-                    entityName = "Project",
-                    entityId = remoteProject.id,
-                    localValue = "${localProject.title} (${localProject.details})",
-                    remoteValue = "${remoteProject.title} (${remoteProject.details})",
-                    localRecordVersion = localProject.recordVersion,
-                    remoteRecordVersion = remoteProject.recordVersion,
-                    localUpdatedAt = localProject.updatedAt,
-                    remoteUpdatedAt = remoteProject.updatedAt
-                )
-            }
-        }
-        return conflicts
-    }
-
-    override suspend fun applySync(remote: SyncPayload, decisions: List<ResolvedSyncDecision>) {
-        val decisionById = decisions.associateBy { it.conflictId }
-        val conflicts = detectConflicts(remote)
-        val allowedRemoteIds = conflicts
-            .filter { conflict -> decisionById[conflict.id]?.acceptRemote == true }
-            .map { it.entityId }
-            .toSet()
-
-        val mergedParticipants = mergeRecords(participants.value, remote.participants, { it.id }, { it.recordVersion }, { it.updatedAt })
-        val mergedExpenses = mergeRecords(expenses.value, remote.expenses, { it.id }, { it.recordVersion }, { it.updatedAt })
-        val mergedProjects = mergeProjects(remote.projects, allowedRemoteIds, mergedExpenses)
-        projects.value = mergedProjects
-
-        participants.value = mergedParticipants
-        expenses.value = mergedExpenses
-        history.value = mergeRecords(history.value, remote.history, { it.id }, { it.recordVersion }, { it.date })
-
-        conflicts.forEach { conflict ->
-            val decision = decisionById[conflict.id]
-            if (decision != null) {
-                appendConflictResolutionLog(
-                    ConflictResolutionLogEntry(
-                        entityName = conflict.entityName,
-                        entityId = conflict.entityId,
-                        localValue = conflict.localValue,
-                        remoteValue = conflict.remoteValue,
-                        decision = if (decision.acceptRemote) ConflictResolutionDecision.ACCEPT_REMOTE else ConflictResolutionDecision.KEEP_LOCAL,
-                        decisionSource = decision.source,
-                        isApplied = true,
-                        date = Date()
-                    )
-                )
-            }
-        }
-
-        appendSyncLog(
-            SyncLogEntry(
-                date = Date(),
-                deviceName = "SharedFinance Peer",
-                result = if (conflicts.isEmpty()) SyncResultType.SUCCESS else SyncResultType.CONFLICT,
-                changedRecordsCount = remote.projects.size + remote.participants.size + remote.expenses.size + remote.history.size
-            )
-        )
-
-        Log.d(
-            "SharedFinanceSync",
-            "import_payload projects=${remote.projects.size} participants=${remote.participants.size} expenses=${remote.expenses.size} history=${remote.history.size} syncLogs=${remote.syncLogs.size} conflicts=${conflicts.size}"
-        )
-
-        appendHistory("Sync completed", HistoryOperationType.SYNC)
-        persistState()
-    }
-
-    private fun mergeProjects(remote: List<Project>, allowedRemoteIds: Set<UUID>, mergedExpenses: List<Expense>): List<Project> {
-        val localMap = projects.value.associateBy { it.id }.toMutableMap()
-        remote.forEach { remoteProject ->
-            val localProject = localMap[remoteProject.id]
+    private fun mergeProjects(local: List<Project>, remote: List<Project>, mergedExpenses: List<Expense>): List<Project> {
+        val merged = local.associateBy { it.id }.toMutableMap()
+        for (remoteProject in remote) {
+            val localProject = merged[remoteProject.id]
             if (localProject == null) {
-                localMap[remoteProject.id] = enrichProjectAssociations(remoteProject, mergedExpenses)
-                return@forEach
+                merged[remoteProject.id] = enrichProjectAssociations(remoteProject, mergedExpenses)
+                continue
             }
-
-            val preferRemote = remoteProject.id in allowedRemoteIds || shouldPreferRemote(
-                localItem = localProject,
-                remoteItem = remoteProject,
-                versionSelector = { it.recordVersion },
-                updatedAtSelector = { it.updatedAt }
+            val preferRemote = shouldPreferRemote(localProject, remoteProject, { it.recordVersion }, { it.updatedAt })
+            val base = if (preferRemote) remoteProject else localProject
+            val projectExpenses = mergedExpenses.filter { it.projectId == base.id }
+            merged[base.id] = base.copy(
+                participantIds = (localProject.participantIds + remoteProject.participantIds + projectExpenses.map { it.participantId }).distinct(),
+                expenseIds = (localProject.expenseIds + remoteProject.expenseIds + projectExpenses.map { it.id }).distinct(),
+                recordVersion = maxOf(localProject.recordVersion, remoteProject.recordVersion),
+                updatedAt = maxOf(localProject.updatedAt, remoteProject.updatedAt)
             )
-            localMap[remoteProject.id] = mergeProjectRecord(localProject, remoteProject, preferRemote, mergedExpenses)
         }
-        return localMap.values
-            .map { enrichProjectAssociations(it, mergedExpenses) }
-            .sortedByDescending { it.updatedAt.time }
-    }
-
-    private fun mergeProjectRecord(
-        localProject: Project,
-        remoteProject: Project,
-        preferRemoteScalars: Boolean,
-        mergedExpenses: List<Expense>
-    ): Project {
-        val baseProject = if (preferRemoteScalars) remoteProject else localProject
-        val projectExpenses = mergedExpenses.filter { it.projectId == localProject.id }
-        return baseProject.copy(
-            participantIds = (localProject.participantIds + remoteProject.participantIds + projectExpenses.map { it.participantId }).distinct(),
-            expenseIds = (localProject.expenseIds + remoteProject.expenseIds + projectExpenses.map { it.id }).distinct(),
-            recordVersion = maxOf(localProject.recordVersion, remoteProject.recordVersion),
-            updatedAt = maxOf(localProject.updatedAt, remoteProject.updatedAt)
-        )
+        return merged.values.map { enrichProjectAssociations(it, mergedExpenses) }
     }
 
     private fun enrichProjectAssociations(project: Project, mergedExpenses: List<Expense>): Project {
@@ -350,7 +308,7 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
         updatedAtSelector: (T) -> Date
     ): List<T> {
         val merged = local.associateBy(keySelector).toMutableMap()
-        remote.forEach { remoteItem ->
+        for (remoteItem in remote) {
             val key = keySelector(remoteItem)
             val localItem = merged[key]
             if (localItem == null || shouldPreferRemote(localItem, remoteItem, versionSelector, updatedAtSelector)) {
@@ -368,9 +326,7 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
     ): Boolean {
         val localVersion = versionSelector(localItem)
         val remoteVersion = versionSelector(remoteItem)
-        if (remoteVersion != localVersion) {
-            return remoteVersion > localVersion
-        }
+        if (remoteVersion != localVersion) return remoteVersion > localVersion
         return updatedAtSelector(remoteItem).after(updatedAtSelector(localItem))
     }
 
@@ -393,8 +349,7 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
             participants = participants.value,
             expenses = expenses.value,
             history = history.value,
-            syncLogs = syncLogs.value,
-            conflictLog = conflictLog.value
+            syncLogs = syncLogs.value
         )
         prefs.edit().putString(KEY_STATE, gson.toJson(state)).apply()
     }
@@ -409,7 +364,6 @@ class InMemorySharedFinanceRepository(context: Context) : SharedFinanceRepositor
                     expenses.value = state.expenses
                     history.value = state.history
                     syncLogs.value = state.syncLogs
-                    conflictLog.value = state.conflictLog
                 }
             }
     }

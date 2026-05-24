@@ -38,12 +38,6 @@ interface SharedFinanceDao {
     @Query("SELECT * FROM sync_logs")
     suspend fun getSyncLogsSnapshot(): List<SyncLogEntity>
 
-    @Query("SELECT * FROM conflict_resolution_logs ORDER BY date DESC")
-    fun observeConflictResolutionLogs(): Flow<List<ConflictResolutionLogEntity>>
-
-    @Query("SELECT * FROM conflict_resolution_logs")
-    suspend fun getConflictResolutionLogsSnapshot(): List<ConflictResolutionLogEntity>
-
     @Query("DELETE FROM projects")
     suspend fun clearProjects()
 
@@ -59,9 +53,6 @@ interface SharedFinanceDao {
     @Query("DELETE FROM sync_logs")
     suspend fun clearSyncLogs()
 
-    @Query("DELETE FROM conflict_resolution_logs")
-    suspend fun clearConflictResolutionLogs()
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertProjects(items: List<ProjectEntity>)
 
@@ -76,7 +67,4 @@ interface SharedFinanceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSyncLogs(items: List<SyncLogEntity>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertConflictResolutionLogs(items: List<ConflictResolutionLogEntity>)
 }

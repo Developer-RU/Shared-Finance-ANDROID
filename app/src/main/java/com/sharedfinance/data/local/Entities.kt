@@ -61,16 +61,3 @@ data class SyncLogEntity(
     val result: String,
     val changedRecordsCount: Int
 )
-
-@Entity(tableName = "conflict_resolution_logs")
-data class ConflictResolutionLogEntity(
-    @PrimaryKey val id: String,
-    val date: Long,
-    val entityName: String,
-    val entityId: String,
-    val localValue: String,
-    val remoteValue: String,
-    val decision: String,
-    val decisionSource: String,
-    val isApplied: Boolean
-)

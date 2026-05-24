@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import java.util.UUID
 
 enum class BalanceSortOption {
     NAME_ASC,
@@ -85,6 +87,16 @@ class BalanceViewModel(
     fun updateFilter(filter: BalanceFilterOption) {
         _state.value = _state.value.copy(selectedFilter = filter)
         recomputeFilter()
+    }
+
+    fun participantHasExpenses(participantId: UUID): Boolean {
+        return _state.value.participants.firstOrNull { it.id == participantId }?.expenseAmount?.let { it > 0.0 } == true
+    }
+
+    fun deleteParticipant(participantId: UUID) {
+        scope.launch {
+            repository.deleteParticipant(participantId, null)
+        }
     }
 
     private fun recomputeFilter() {

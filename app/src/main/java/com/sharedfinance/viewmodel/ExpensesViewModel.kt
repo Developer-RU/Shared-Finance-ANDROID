@@ -34,6 +34,7 @@ data class ExpensesUiState(
     val selectedDraftParticipantId: UUID? = null,
     val selectedFilterParticipantId: UUID? = null,
     val selectedSort: ExpenseSortOption = ExpenseSortOption.NEWEST,
+    val validationMessage: String = "",
     val isLoading: Boolean = true
 )
 
@@ -112,7 +113,10 @@ class ExpensesViewModel(
         val title = _state.value.draftTitle.trim()
         val amount = _state.value.draftAmount.replace(",", ".").toDoubleOrNull() ?: return
         val participantId = _state.value.selectedDraftParticipantId ?: _state.value.participants.firstOrNull()?.id ?: return
-        if (title.isEmpty() || amount <= 0.0) return
+        if (title.isEmpty() || amount <= 0.0) {
+            _state.value = _state.value.copy(validationMessage = "expense_validation_amount_positive")
+            return
+        }
 
         scope.launch {
             repository.createExpense(
@@ -126,8 +130,49 @@ class ExpensesViewModel(
                     date = Date()
                 )
             )
-            _state.value = _state.value.copy(draftTitle = "", draftAmount = "", draftComment = "")
+            _state.value = _state.value.copy(draftTitle = "", draftAmount = "", draftComment = "", validationMessage = "")
         }
+    }
+
+    fun updateExpense(
+        expenseId: UUID,
+        title: String,
+        amount: Double,
+        comment: String,
+        onSuccess: () -> Unit = {}
+    ) {
+        val cleanTitle = title.trim()
+        val cleanComment = comment.trim()
+        if (cleanTitle.isEmpty() || amount <= 0.0) {
+            _state.value = _state.value.copy(validationMessage = "expense_validation_amount_positive")
+            return
+        }
+
+        scope.launch {
+            val existingExpense = _state.value.expenses.firstOrNull { it.id == expenseId }
+            if (existingExpense == null) {
+                _state.value = _state.value.copy(validationMessage = "expense_validation_not_found")
+                return@launch
+            }
+
+            val updated = repository.updateExpense(
+                existingExpense.copy(
+                    title = cleanTitle,
+                    amount = amount,
+                    comment = cleanComment
+                )
+            )
+            if (updated) {
+                _state.value = _state.value.copy(validationMessage = "")
+                onSuccess()
+            } else {
+                _state.value = _state.value.copy(validationMessage = "expense_validation_participant_not_in_project")
+            }
+        }
+    }
+
+    fun clearValidationMessage() {
+        _state.value = _state.value.copy(validationMessage = "")
     }
 
     fun deleteExpense(expenseId: UUID) {

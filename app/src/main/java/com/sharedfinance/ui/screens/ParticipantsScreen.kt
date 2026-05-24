@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -22,6 +23,7 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -41,6 +43,7 @@ import com.sharedfinance.ui.utils.asCurrency
 import com.sharedfinance.viewmodel.ParticipantBalanceFilter
 import com.sharedfinance.viewmodel.ParticipantSortOption
 import com.sharedfinance.viewmodel.ParticipantsViewModel
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +52,9 @@ fun ParticipantsScreen(viewModel: ParticipantsViewModel) {
     var filtersVisible by rememberSaveable { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
     var balanceExpanded by remember { mutableStateOf(false) }
+    var participantToRename by remember { mutableStateOf<UUID?>(null) }
+    var renameText by rememberSaveable { mutableStateOf("") }
+    var participantToDelete by remember { mutableStateOf<UUID?>(null) }
     val canAddParticipant = state.draftName.trim().isNotEmpty() && state.draftContribution.trim().isNotEmpty()
     val selectedSortLabel = when (state.selectedSort) {
         ParticipantSortOption.NAME_ASC -> stringResource(R.string.sort_name)
@@ -62,6 +68,79 @@ fun ParticipantsScreen(viewModel: ParticipantsViewModel) {
         ParticipantBalanceFilter.POSITIVE -> stringResource(R.string.filter_positive)
         ParticipantBalanceFilter.NEGATIVE -> stringResource(R.string.filter_negative)
         ParticipantBalanceFilter.ZERO -> stringResource(R.string.filter_zero)
+    }
+
+    if (participantToRename != null) {
+        AlertDialog(
+            onDismissRequest = {
+                participantToRename = null
+                renameText = ""
+            },
+            title = { Text(stringResource(R.string.rename_participant)) },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text(stringResource(R.string.participant_name)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val targetId = participantToRename
+                        if (targetId != null && renameText.isNotBlank()) {
+                            viewModel.updateParticipantName(targetId, renameText.trim())
+                        }
+                        participantToRename = null
+                        renameText = ""
+                    },
+                    enabled = renameText.isNotBlank()
+                ) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        participantToRename = null
+                        renameText = ""
+                    }
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (participantToDelete != null) {
+        val hasExpenses = participantToDelete?.let(viewModel::participantHasExpenses) == true
+        AlertDialog(
+            onDismissRequest = { participantToDelete = null },
+            title = { Text(stringResource(R.string.delete_participant_title)) },
+            text = {
+                Text(
+                    if (hasExpenses) {
+                        stringResource(R.string.delete_participant_with_expenses_message)
+                    } else {
+                        stringResource(R.string.delete_participant_message)
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    participantToDelete?.let(viewModel::deleteParticipant)
+                    participantToDelete = null
+                }) {
+                    Text(stringResource(R.string.delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { participantToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 
     Column(
@@ -243,8 +322,16 @@ fun ParticipantsScreen(viewModel: ParticipantsViewModel) {
                                 )
                             )
                         }
-                        Button(onClick = { viewModel.deleteParticipant(participant.id) }) {
-                            Text(stringResource(R.string.delete))
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                participantToRename = participant.id
+                                renameText = participant.name
+                            }) {
+                                Text(stringResource(R.string.rename))
+                            }
+                            Button(onClick = { participantToDelete = participant.id }) {
+                                Text(stringResource(R.string.delete))
+                            }
                         }
                     }
                 }

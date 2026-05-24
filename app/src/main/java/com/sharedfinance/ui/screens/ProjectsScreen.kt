@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material3.AlertDialog
@@ -65,6 +66,7 @@ import com.sharedfinance.ui.components.PremiumHeaderCard
 import com.sharedfinance.ui.components.PremiumSectionCard
 import com.sharedfinance.ui.utils.asCurrency
 import com.sharedfinance.viewmodel.ProjectsViewModel
+import java.util.UUID
 import kotlinx.coroutines.launch
 
 private enum class ProjectsStatusFilter {
@@ -80,6 +82,7 @@ fun ProjectsScreen(viewModel: ProjectsViewModel, onOpenProject: (String) -> Unit
     var filtersVisible by rememberSaveable { mutableStateOf(false) }
     var statusFilterExpanded by remember { mutableStateOf(false) }
     var statusFilter by rememberSaveable { mutableStateOf(ProjectsStatusFilter.ALL) }
+    var projectToDelete by remember { mutableStateOf<UUID?>(null) }
     val projects = viewModel.filteredProjects.filter { project ->
         when (statusFilter) {
             ProjectsStatusFilter.ALL -> true
@@ -93,6 +96,27 @@ fun ProjectsScreen(viewModel: ProjectsViewModel, onOpenProject: (String) -> Unit
         ProjectsStatusFilter.ALL -> stringResource(R.string.all)
         ProjectsStatusFilter.ACTIVE -> stringResource(R.string.status_active)
         ProjectsStatusFilter.ARCHIVED -> stringResource(R.string.status_archived)
+    }
+
+    if (projectToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { projectToDelete = null },
+            title = { Text(stringResource(R.string.delete_project_title)) },
+            text = { Text(stringResource(R.string.delete_project_cascade_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    projectToDelete?.let(viewModel::deleteProject)
+                    projectToDelete = null
+                }) {
+                    Text(stringResource(R.string.delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { projectToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 
     Column(
@@ -266,18 +290,23 @@ fun ProjectsScreen(viewModel: ProjectsViewModel, onOpenProject: (String) -> Unit
 
                 SwipeToDismissBox(
                     state = dismissState,
-                    enableDismissFromStartToEnd = false,
+                    enableDismissFromStartToEnd = true,
                     enableDismissFromEndToStart = true,
                     backgroundContent = {
                         ProjectSwipeActions(
+                            onPinToggle = {
+                                viewModel.togglePinned(project.id)
+                                scope.launch { dismissState.reset() }
+                            },
                             onArchive = {
                                 viewModel.archiveProject(project.id)
                                 scope.launch { dismissState.reset() }
                             },
                             onDelete = {
-                                viewModel.deleteProject(project.id)
+                                projectToDelete = project.id
                                 scope.launch { dismissState.reset() }
                             },
+                            isPinned = project.id in state.pinnedProjectIds,
                             canArchive = project.status == ProjectStatus.ACTIVE,
                             dismissValue = dismissState.dismissDirection
                         )
@@ -293,13 +322,27 @@ fun ProjectsScreen(viewModel: ProjectsViewModel, onOpenProject: (String) -> Unit
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    project.title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        project.title,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (project.id in state.pinnedProjectIds) {
+                                        Icon(
+                                            imageVector = Icons.Filled.PushPin,
+                                            contentDescription = stringResource(R.string.project_pin_action),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
                                 AssistChip(
                                     onClick = {},
                                     enabled = true,
@@ -375,11 +418,14 @@ fun ProjectsScreen(viewModel: ProjectsViewModel, onOpenProject: (String) -> Unit
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProjectSwipeActions(
+    onPinToggle: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
+    isPinned: Boolean,
     canArchive: Boolean,
     dismissValue: SwipeToDismissBoxValue
 ) {
+    val isLeadingActionsVisible = dismissValue == SwipeToDismissBoxValue.StartToEnd
     val isTrailingActionsVisible = dismissValue == SwipeToDismissBoxValue.EndToStart
 
     Row(
@@ -389,7 +435,31 @@ private fun ProjectSwipeActions(
             .padding(horizontal = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Box(modifier = Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .width(92.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(16.dp))
+                .background(
+                    if (isLeadingActionsVisible) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            FilledTonalIconButton(onClick = onPinToggle) {
+                Icon(
+                    imageVector = Icons.Filled.PushPin,
+                    contentDescription = if (isPinned) {
+                        stringResource(R.string.project_unpin_action)
+                    } else {
+                        stringResource(R.string.project_pin_action)
+                    }
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .width(184.dp)

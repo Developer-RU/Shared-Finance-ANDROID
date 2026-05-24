@@ -2,13 +2,8 @@ package com.sharedfinance.viewmodel
 
 import com.sharedfinance.ble.BleDevice
 import com.sharedfinance.ble.BleManager
-import com.sharedfinance.model.Expense
-import com.sharedfinance.model.Participant
 import com.sharedfinance.model.Project
-import com.sharedfinance.model.SyncConflict
-import com.sharedfinance.model.SyncPayload
 import com.sharedfinance.sync.SyncService
-import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,17 +13,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 enum class SyncStatus {
     IDLE,
     SCANNING,
     SCAN_STOPPED,
+    CONNECTING,
     CONNECTED,
-    CONFLICTS_DETECTED,
-    PREVIEW_READY,
+    TRANSFERRING,
+    WAITING_RESPONSE,
     SYNC_COMPLETED,
-    SYNC_COMPLETED_WITH_DECISIONS,
-    MISSING_DECISIONS,
     TRANSFER_FAILED
 }
 
@@ -37,14 +32,13 @@ data class SyncUiState(
     val connectedDevice: String? = null,
     val connectedDeviceAddress: String? = null,
     val devices: List<BleDevice> = emptyList(),
-    val conflicts: List<SyncConflict> = emptyList(),
-    val decisions: Map<UUID, Boolean> = emptyMap(),
     val syncStatus: SyncStatus = SyncStatus.IDLE,
-    val hasPendingPayload: Boolean = false,
     val progress: Float = 0f,
     val isSyncInProgress: Boolean = false,
     val statusMessage: String = "",
-    val bleDebugStatus: String = ""
+    val bleDebugStatus: String = "",
+    val availableProjects: List<Project> = emptyList(),
+    val selectedProjectIds: Set<UUID> = emptySet()
 )
 
 class SyncViewModel(
@@ -54,9 +48,6 @@ class SyncViewModel(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(SyncUiState())
     val state: StateFlow<SyncUiState> = _state.asStateFlow()
-    private var pendingPayload: SyncPayload? = null
-    private var pendingLocalPayload: SyncPayload? = null
-    @Volatile private var previewInProgress = false
 
     init {
         scope.launch {
@@ -71,7 +62,29 @@ class SyncViewModel(
         }
         scope.launch {
             bleManager.debugStatus.collectLatest { bleDebugStatus ->
-                _state.update { it.copy(bleDebugStatus = bleDebugStatus) }
+                _state.update { current ->
+                    if (!current.isSyncInProgress) {
+                        return@update current.copy(bleDebugStatus = bleDebugStatus)
+                    }
+
+                    when {
+                        bleDebugStatus.startsWith("transfer_waiting_inbound") -> {
+                            current.copy(
+                                bleDebugStatus = bleDebugStatus,
+                                syncStatus = SyncStatus.WAITING_RESPONSE,
+                                statusMessage = "sync_state_waiting_response"
+                            )
+                        }
+                        bleDebugStatus.startsWith("transfer_") -> {
+                            current.copy(
+                                bleDebugStatus = bleDebugStatus,
+                                syncStatus = SyncStatus.TRANSFERRING,
+                                statusMessage = "sync_state_transferring"
+                            )
+                        }
+                        else -> current.copy(bleDebugStatus = bleDebugStatus)
+                    }
+                }
             }
         }
         scope.launch {
@@ -89,32 +102,51 @@ class SyncViewModel(
         scope.launch {
             bleManager.connectedDeviceName.collectLatest { connectedName ->
                 _state.update {
-                    if (connectedName != null) {
-                        it.copy(
-                            connectedDevice = connectedName,
-                            syncStatus = SyncStatus.CONNECTED,
-                            statusMessage = "sync_state_connected"
-                        )
-                    } else {
-                        it.copy(connectedDevice = null)
-                    }
+                    it.copy(connectedDevice = connectedName)
                 }
             }
         }
         scope.launch {
             bleManager.connectedDeviceAddress.collectLatest { connectedAddress ->
-                _state.update { it.copy(connectedDeviceAddress = connectedAddress) }
+                _state.update { current ->
+                    if (connectedAddress != null) {
+                        current.copy(
+                            connectedDeviceAddress = connectedAddress,
+                            syncStatus = SyncStatus.CONNECTED,
+                            statusMessage = "sync_state_connected"
+                        )
+                    } else {
+                        val fallbackStatus = if (current.isScanning) SyncStatus.SCANNING else SyncStatus.SCAN_STOPPED
+                        val fallbackMessage = if (current.isScanning) "sync_state_scanning" else "sync_state_scan_stopped"
+                        current.copy(
+                            connectedDevice = null,
+                            connectedDeviceAddress = null,
+                            syncStatus = if (current.isSyncInProgress) current.syncStatus else fallbackStatus,
+                            statusMessage = if (current.isSyncInProgress) current.statusMessage else fallbackMessage
+                        )
+                    }
+                }
             }
         }
     }
 
     fun startScan() {
-        bleManager.startScan()
-        _state.update {
-            it.copy(
-                syncStatus = SyncStatus.SCANNING,
-                statusMessage = "sync_state_scanning"
-            )
+        runCatching {
+            bleManager.startScan()
+        }.onSuccess {
+            _state.update {
+                it.copy(
+                    syncStatus = SyncStatus.SCANNING,
+                    statusMessage = "sync_state_scanning"
+                )
+            }
+        }.onFailure {
+            _state.update {
+                it.copy(
+                    syncStatus = SyncStatus.SCAN_STOPPED,
+                    statusMessage = "sync_state_scan_stopped"
+                )
+            }
         }
     }
 
@@ -133,7 +165,8 @@ class SyncViewModel(
         _state.update {
             it.copy(
                 isScanning = false,
-                statusMessage = "sync_state_scan_stopped"
+                syncStatus = SyncStatus.CONNECTING,
+                statusMessage = "sync_state_connecting"
             )
         }
     }
@@ -144,9 +177,7 @@ class SyncViewModel(
     }
 
     fun toggleDeviceConnection(device: BleDevice) {
-        val connectedAddress = _state.value.connectedDeviceAddress
-            ?.trim()
-            ?.uppercase()
+        val connectedAddress = _state.value.connectedDeviceAddress?.trim()?.uppercase()
         val targetAddress = device.address.trim().uppercase()
         if (connectedAddress != null && connectedAddress == targetAddress) {
             bleManager.disconnect()
@@ -155,173 +186,62 @@ class SyncViewModel(
         }
     }
 
-    fun chooseDecision(conflictId: UUID, acceptRemote: Boolean) {
-        _state.update { state ->
-            state.copy(decisions = state.decisions + (conflictId to acceptRemote))
-        }
-    }
-
-    fun chooseAll(acceptRemote: Boolean) {
-        val updated = _state.value.conflicts.associate { it.id to acceptRemote }
-        _state.update { it.copy(decisions = updated) }
-    }
-
-    fun autoSelectByVersionRule() {
-        val autoDecisions = _state.value.conflicts.associate { conflict ->
-            val acceptRemote = conflict.remoteRecordVersion >= conflict.localRecordVersion
-            conflict.id to acceptRemote
-        }
+    fun refreshProjectSelection(projects: List<Project>) {
         _state.update {
-            it.copy(
-                decisions = autoDecisions,
-                syncStatus = if (_state.value.conflicts.isEmpty()) SyncStatus.IDLE else SyncStatus.PREVIEW_READY
-            )
+            val selected = if (it.selectedProjectIds.isEmpty()) projects.map { p -> p.id }.toSet() else it.selectedProjectIds
+            it.copy(availableProjects = projects, selectedProjectIds = selected)
         }
     }
 
-    fun previewConflicts(remotePayload: SyncPayload, selectedProjectIds: Set<UUID>) {
-        if (previewInProgress) return
-        scope.launch {
-            previewConflictsInternal(remotePayload, selectedProjectIds)
-        }
-    }
-
-    fun applyDecisions() {
-        val localPayload = pendingLocalPayload ?: return
-        val payload = pendingPayload ?: return
-        val uiState = _state.value
-        val decisions = uiState.decisions
-        val conflicts = uiState.conflicts
-        val hasAllDecisions = conflicts.all { decisions.containsKey(it.id) }
-        if (conflicts.isNotEmpty() && !hasAllDecisions) {
-            _state.update {
-                it.copy(
-                    syncStatus = SyncStatus.MISSING_DECISIONS,
-                    statusMessage = "sync_state_missing_decisions"
-                )
-            }
-            return
-        }
-        scope.launch {
-            _state.update { it.copy(progress = 0.9f) }
-            syncService.apply(localPayload, payload, decisions)
-            pendingPayload = null
-            pendingLocalPayload = null
-            _state.update {
-                it.copy(
-                    syncStatus = SyncStatus.SYNC_COMPLETED_WITH_DECISIONS,
-                    hasPendingPayload = false,
-                    conflicts = emptyList(),
-                    decisions = emptyMap(),
-                    progress = 1f,
-                    statusMessage = "sync_state_completed_with_decisions"
-                )
-            }
-        }
-    }
-
-    private suspend fun previewConflictsInternal(remotePayload: SyncPayload, selectedProjectIds: Set<UUID>): List<SyncConflict> {
-        if (previewInProgress) return emptyList()
-        previewInProgress = true
-        _state.update { it.copy(progress = 0.01f, isSyncInProgress = true) }
-        try {
-            val localPayload = filterPayloadByProjects(syncService.buildLocalPayload(), selectedProjectIds)
-            val shouldUseBleTransfer = bleManager.canInitiateCentralTransfer()
-            val payloadFromBle = if (shouldUseBleTransfer) {
-                syncService.exchangePayloadOverBle(bleManager, localPayload)
+    fun toggleProjectSelection(projectId: UUID) {
+        _state.update {
+            val selected = if (projectId in it.selectedProjectIds) {
+                it.selectedProjectIds - projectId
             } else {
-                null
+                it.selectedProjectIds + projectId
             }
-            if (shouldUseBleTransfer && payloadFromBle == null) {
-                pendingPayload = null
-                pendingLocalPayload = null
-                _state.update {
-                    it.copy(
-                        progress = 0f,
-                        isSyncInProgress = false,
-                        hasPendingPayload = false,
-                        syncStatus = SyncStatus.TRANSFER_FAILED,
-                        statusMessage = "sync_state_transfer_failed"
-                    )
-                }
-                return emptyList()
-            }
+            it.copy(selectedProjectIds = selected)
+        }
+    }
 
-            val effectiveRemotePayload = filterPayloadByProjects(payloadFromBle ?: remotePayload, selectedProjectIds)
-            val conflicts = syncService.previewConflicts(localPayload, effectiveRemotePayload)
-            pendingPayload = effectiveRemotePayload
-            pendingLocalPayload = localPayload
+    fun selectAllProjects() {
+        _state.update { it.copy(selectedProjectIds = it.availableProjects.map { p -> p.id }.toSet()) }
+    }
+
+    fun clearSelectedProjects() {
+        _state.update { it.copy(selectedProjectIds = emptySet()) }
+    }
+
+    fun syncNow() {
+        scope.launch {
             _state.update {
                 it.copy(
-                    conflicts = conflicts,
-                    decisions = emptyMap(),
-                    hasPendingPayload = true,
-                    isSyncInProgress = false,
-                    progress = if (conflicts.isEmpty()) 1f else 0.75f,
-                    syncStatus = if (conflicts.isEmpty()) SyncStatus.SYNC_COMPLETED else SyncStatus.CONFLICTS_DETECTED,
-                    statusMessage = if (conflicts.isEmpty()) "sync_state_completed" else "sync_state_conflicts_detected"
+                    isSyncInProgress = true,
+                    progress = 0.01f,
+                    syncStatus = SyncStatus.TRANSFERRING,
+                    statusMessage = "sync_state_transferring"
                 )
             }
-            if (conflicts.isEmpty()) {
-                syncService.apply(localPayload, effectiveRemotePayload, emptyMap())
-                pendingPayload = null
-                pendingLocalPayload = null
+            val status = syncService.syncNow(bleManager, _state.value.selectedProjectIds)
+            if (status == "sync_state_completed") {
                 _state.update {
                     it.copy(
                         syncStatus = SyncStatus.SYNC_COMPLETED,
-                        hasPendingPayload = false,
                         isSyncInProgress = false,
                         progress = 1f,
                         statusMessage = "sync_state_completed"
                     )
                 }
             } else {
-                // Always apply non-conflicting updates so lists refresh after each sync.
-                // For unresolved conflicts we keep local values by default.
-                syncService.apply(localPayload, effectiveRemotePayload, emptyMap())
-                autoSelectByVersionRule()
                 _state.update {
                     it.copy(
-                        hasPendingPayload = false,
-                        syncStatus = SyncStatus.SYNC_COMPLETED_WITH_DECISIONS,
-                        statusMessage = "sync_state_completed_with_decisions"
+                        syncStatus = SyncStatus.TRANSFER_FAILED,
+                        isSyncInProgress = false,
+                        progress = 0f,
+                        statusMessage = "sync_state_transfer_failed"
                     )
                 }
             }
-            return conflicts
-        } finally {
-            previewInProgress = false
-            _state.update { current ->
-                if (current.isSyncInProgress) current.copy(isSyncInProgress = false) else current
-            }
         }
-    }
-
-    private fun filterPayloadByProjects(payload: SyncPayload, selectedProjectIds: Set<UUID>): SyncPayload {
-        if (selectedProjectIds.isEmpty()) {
-            return payload.copy(
-                projects = emptyList(),
-                participants = emptyList(),
-                expenses = emptyList()
-            )
-        }
-
-        val selectedProjects = payload.projects.filter { it.id in selectedProjectIds }
-        val selectedProjectIdSet = selectedProjects.mapTo(mutableSetOf()) { it.id }
-        val selectedExpenseIds = selectedProjects.flatMapTo(mutableSetOf()) { it.expenseIds }
-        val selectedExpenses = payload.expenses.filter { expense ->
-            expense.id in selectedExpenseIds || expense.projectId in selectedProjectIdSet
-        }
-        val selectedParticipantIds = buildSet {
-            selectedProjects.forEach { addAll(it.participantIds) }
-            selectedExpenses.forEach { add(it.participantId) }
-        }
-        val selectedParticipants = payload.participants.filter { it.id in selectedParticipantIds }
-
-        return payload.copy(
-            projects = selectedProjects,
-            participants = selectedParticipants,
-            expenses = selectedExpenses
-        )
     }
 }

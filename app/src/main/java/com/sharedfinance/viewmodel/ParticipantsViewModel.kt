@@ -118,6 +118,21 @@ class ParticipantsViewModel(
         }
     }
 
+    fun updateParticipantName(participantId: UUID, newName: String) {
+        val trimmedName = newName.trim()
+        if (trimmedName.isEmpty()) return
+        val participant = _state.value.participants.firstOrNull { it.id == participantId } ?: return
+        scope.launch {
+            repository.updateParticipant(participant.copy(name = trimmedName), projectId)
+        }
+    }
+
+    fun participantHasExpenses(participantId: UUID): Boolean {
+        val participantBalance = _state.value.balancesByParticipantId[participantId] ?: 0.0
+        val participant = _state.value.participants.firstOrNull { it.id == participantId } ?: return false
+        return participant.contributionAmount - participantBalance > 0.0
+    }
+
     private fun recomputeFilter() {
         val query = _state.value.searchText.trim()
         val base = _state.value.participants

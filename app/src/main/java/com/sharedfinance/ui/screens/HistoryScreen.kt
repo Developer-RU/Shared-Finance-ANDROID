@@ -1,8 +1,5 @@
 package com.sharedfinance.ui.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,69 +21,34 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.sharedfinance.R
 import com.sharedfinance.model.HistoryOperationType
-import com.sharedfinance.model.SyncResultType
 import com.sharedfinance.ui.components.PremiumHeaderCard
 import com.sharedfinance.ui.components.PremiumSectionCard
 import com.sharedfinance.ui.utils.asShortDate
 import com.sharedfinance.ui.utils.asShortDateTime
-import com.sharedfinance.viewmodel.ConflictDecisionFilter
 import com.sharedfinance.viewmodel.HistoryDateFilter
 import com.sharedfinance.viewmodel.HistoryOperationFilter
-import com.sharedfinance.viewmodel.HistorySyncResultFilter
 import com.sharedfinance.viewmodel.HistoryViewModel
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel) {
     val state by viewModel.state.collectAsState()
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     var filtersVisible by rememberSaveable { mutableStateOf(false) }
     var operationExpanded by remember { mutableStateOf(false) }
     var dateExpanded by remember { mutableStateOf(false) }
-    var syncResultExpanded by remember { mutableStateOf(false) }
-    var decisionExpanded by remember { mutableStateOf(false) }
-    var exportStatusKey by rememberSaveable { mutableStateOf("") }
-
-    val exportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json")
-    ) { uri: Uri? ->
-        if (uri == null) {
-            exportStatusKey = "history_export_error"
-            return@rememberLauncherForActivityResult
-        }
-        scope.launch {
-            val bytes = viewModel.exportFilteredConflictLogsData()
-            if (bytes == null) {
-                exportStatusKey = "history_export_error"
-                return@launch
-            }
-            val written = runCatching {
-                context.contentResolver.openOutputStream(uri)?.use { stream ->
-                    stream.write(bytes)
-                } ?: error("Output stream unavailable")
-                true
-            }.getOrElse { false }
-            exportStatusKey = if (written) "history_export_done" else "history_export_error"
-        }
-    }
 
     val selectedOperationLabel = when (state.selectedOperation) {
         HistoryOperationFilter.ALL -> stringResource(R.string.all)
@@ -101,19 +63,6 @@ fun HistoryScreen(viewModel: HistoryViewModel) {
         HistoryDateFilter.TODAY -> stringResource(R.string.filter_today)
         HistoryDateFilter.SEVEN_DAYS -> stringResource(R.string.filter_7_days)
         HistoryDateFilter.THIRTY_DAYS -> stringResource(R.string.filter_30_days)
-    }
-
-    val selectedSyncResultLabel = when (state.selectedSyncResultFilter) {
-        HistorySyncResultFilter.ALL -> stringResource(R.string.history_result_all)
-        HistorySyncResultFilter.SUCCESS -> stringResource(R.string.history_result_success)
-        HistorySyncResultFilter.CONFLICT -> stringResource(R.string.history_result_conflict)
-        HistorySyncResultFilter.FAILED -> stringResource(R.string.history_result_failed)
-    }
-
-    val selectedDecisionLabel = when (state.selectedDecisionFilter) {
-        ConflictDecisionFilter.ALL -> stringResource(R.string.history_filter_all_decisions)
-        ConflictDecisionFilter.ACCEPT_REMOTE -> stringResource(R.string.history_filter_accept_remote)
-        ConflictDecisionFilter.KEEP_LOCAL -> stringResource(R.string.history_filter_keep_local)
     }
 
     Column(
@@ -217,99 +166,6 @@ fun HistoryScreen(viewModel: HistoryViewModel) {
                         }
                     }
                 }
-
-                ExposedDropdownMenuBox(
-                    expanded = syncResultExpanded,
-                    onExpandedChange = { syncResultExpanded = !syncResultExpanded }
-                ) {
-                    OutlinedTextField(
-                        value = selectedSyncResultLabel,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text(stringResource(R.string.sync_result_filter)) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = syncResultExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth()
-                    )
-                    DropdownMenu(
-                        expanded = syncResultExpanded,
-                        onDismissRequest = { syncResultExpanded = false }
-                    ) {
-                        HistorySyncResultFilter.values().forEach { option ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        when (option) {
-                                            HistorySyncResultFilter.ALL -> stringResource(R.string.history_result_all)
-                                            HistorySyncResultFilter.SUCCESS -> stringResource(R.string.history_result_success)
-                                            HistorySyncResultFilter.CONFLICT -> stringResource(R.string.history_result_conflict)
-                                            HistorySyncResultFilter.FAILED -> stringResource(R.string.history_result_failed)
-                                        }
-                                    )
-                                },
-                                onClick = {
-                                    viewModel.updateSyncResultFilter(option)
-                                    syncResultExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
-
-                ExposedDropdownMenuBox(
-                    expanded = decisionExpanded,
-                    onExpandedChange = { decisionExpanded = !decisionExpanded }
-                ) {
-                    OutlinedTextField(
-                        value = selectedDecisionLabel,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text(stringResource(R.string.decision_filter)) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = decisionExpanded) },
-                        modifier = Modifier.menuAnchor().fillMaxWidth()
-                    )
-                    DropdownMenu(
-                        expanded = decisionExpanded,
-                        onDismissRequest = { decisionExpanded = false }
-                    ) {
-                        ConflictDecisionFilter.values().forEach { option ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        when (option) {
-                                            ConflictDecisionFilter.ALL -> stringResource(R.string.history_filter_all_decisions)
-                                            ConflictDecisionFilter.ACCEPT_REMOTE -> stringResource(R.string.history_filter_accept_remote)
-                                            ConflictDecisionFilter.KEEP_LOCAL -> stringResource(R.string.history_filter_keep_local)
-                                        }
-                                    )
-                                },
-                                onClick = {
-                                    viewModel.updateDecisionFilter(option)
-                                    decisionExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
-
-                TextButton(onClick = { exportLauncher.launch("shared_finance_conflicts.json") }) {
-                    Text(stringResource(R.string.history_export_conflicts_button))
-                }
-
-                if (exportStatusKey.isNotBlank()) {
-                    Text(
-                        text = if (exportStatusKey == "history_export_done") {
-                            stringResource(R.string.history_export_done)
-                        } else {
-                            stringResource(R.string.history_export_error)
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (exportStatusKey == "history_export_done") {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.error
-                        }
-                    )
-                }
             }
         }
 
@@ -350,64 +206,6 @@ fun HistoryScreen(viewModel: HistoryViewModel) {
                                 }
                                 Text(stringResource(R.string.history_operation_line, operationLabel))
                             }
-                        }
-                    }
-                }
-            }
-
-            item {
-                Text(stringResource(R.string.history_sync_logs_section), style = MaterialTheme.typography.labelLarge)
-            }
-
-            if (state.filteredSyncLogs.isEmpty()) {
-                item { Text(stringResource(R.string.no_records)) }
-            } else {
-                items(state.filteredSyncLogs) { syncLog ->
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(syncLog.deviceName, style = MaterialTheme.typography.titleMedium)
-                            val resultText = when (syncLog.result) {
-                                SyncResultType.SUCCESS -> stringResource(R.string.history_result_success)
-                                SyncResultType.CONFLICT -> stringResource(R.string.history_result_conflict)
-                                SyncResultType.FAILED -> stringResource(R.string.history_result_failed)
-                            }
-                            Text(stringResource(R.string.history_sync_log_line, resultText, syncLog.changedRecordsCount))
-                            Text(syncLog.date.asShortDateTime(), style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
-
-            item {
-                Text(
-                    stringResource(R.string.history_conflict_resolutions_section),
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-
-            if (state.filteredConflictResolutionLogs.isEmpty()) {
-                item { Text(stringResource(R.string.no_records)) }
-            } else {
-                items(state.filteredConflictResolutionLogs) { conflict ->
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                stringResource(
-                                    R.string.history_conflict_entity_line,
-                                    conflict.entityName,
-                                    conflict.entityId.toString().take(8)
-                                ),
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(stringResource(R.string.local_line, conflict.localValue), style = MaterialTheme.typography.bodySmall)
-                            Text(stringResource(R.string.remote_line, conflict.remoteValue), style = MaterialTheme.typography.bodySmall)
-                            Text(conflict.date.asShortDateTime(), style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }

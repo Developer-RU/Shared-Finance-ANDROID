@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -23,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,6 +42,7 @@ import com.sharedfinance.ui.utils.asCurrency
 import com.sharedfinance.ui.utils.asShortDateTime
 import com.sharedfinance.viewmodel.ExpenseSortOption
 import com.sharedfinance.viewmodel.ExpensesViewModel
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +52,10 @@ fun ExpensesScreen(viewModel: ExpensesViewModel) {
     var sortExpanded by remember { mutableStateOf(false) }
     var draftParticipantMenuExpanded by remember { mutableStateOf(false) }
     var filterParticipantMenuExpanded by remember { mutableStateOf(false) }
+    var expenseToEdit by remember { mutableStateOf<UUID?>(null) }
+    var editTitle by rememberSaveable { mutableStateOf("") }
+    var editAmount by rememberSaveable { mutableStateOf("") }
+    var editComment by rememberSaveable { mutableStateOf("") }
 
     val amountValue = state.draftAmount.replace(",", ".").toDoubleOrNull()
     val canAddExpense = state.draftTitle.trim().isNotEmpty() &&
@@ -72,6 +79,85 @@ fun ExpensesScreen(viewModel: ExpensesViewModel) {
         ExpenseSortOption.OLDEST -> stringResource(R.string.sort_oldest)
         ExpenseSortOption.AMOUNT_DESC -> stringResource(R.string.sort_amount_desc)
         ExpenseSortOption.AMOUNT_ASC -> stringResource(R.string.sort_amount_asc)
+    }
+
+    if (!state.validationMessage.isNullOrBlank()) {
+        val validationText = when (state.validationMessage) {
+            "expense_validation_amount_positive" -> stringResource(R.string.expense_validation_amount_positive)
+            "expense_validation_participant_not_in_project" -> stringResource(R.string.expense_validation_participant_not_in_project)
+            "expense_validation_not_found" -> stringResource(R.string.expense_validation_not_found)
+            else -> state.validationMessage
+        }
+        PremiumSectionCard {
+            Text(validationText, color = MaterialTheme.colorScheme.error)
+            TextButton(onClick = viewModel::clearValidationMessage) {
+                Text(stringResource(R.string.ok))
+            }
+        }
+    }
+
+    if (expenseToEdit != null) {
+        AlertDialog(
+            onDismissRequest = {
+                expenseToEdit = null
+                editTitle = ""
+                editAmount = ""
+                editComment = ""
+            },
+            title = { Text(stringResource(R.string.edit_expense)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editTitle,
+                        onValueChange = { editTitle = it },
+                        label = { Text(stringResource(R.string.expense_title)) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editAmount,
+                        onValueChange = { editAmount = it },
+                        label = { Text(stringResource(R.string.expense_amount)) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = editComment,
+                        onValueChange = { editComment = it },
+                        label = { Text(stringResource(R.string.expense_comment)) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val targetId = expenseToEdit
+                    val parsedAmount = editAmount.replace(",", ".").toDoubleOrNull()
+                    if (targetId != null && parsedAmount != null) {
+                        viewModel.updateExpense(
+                            expenseId = targetId,
+                            title = editTitle.trim(),
+                            amount = parsedAmount,
+                            comment = editComment.trim()
+                        )
+                    }
+                    expenseToEdit = null
+                    editTitle = ""
+                    editAmount = ""
+                    editComment = ""
+                }) {
+                    Text(stringResource(R.string.save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    expenseToEdit = null
+                    editTitle = ""
+                    editAmount = ""
+                    editComment = ""
+                }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 
     Column(
@@ -294,8 +380,18 @@ fun ExpensesScreen(viewModel: ExpensesViewModel) {
                             }
                             Text(expense.date.asShortDateTime(), style = MaterialTheme.typography.bodySmall)
                         }
-                        Button(onClick = { viewModel.deleteExpense(expense.id) }) {
-                            Text(stringResource(R.string.delete))
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                expenseToEdit = expense.id
+                                editTitle = expense.title
+                                editAmount = expense.amount.toString()
+                                editComment = expense.comment
+                            }) {
+                                Text(stringResource(R.string.edit))
+                            }
+                            Button(onClick = { viewModel.deleteExpense(expense.id) }) {
+                                Text(stringResource(R.string.delete))
+                            }
                         }
                     }
                 }

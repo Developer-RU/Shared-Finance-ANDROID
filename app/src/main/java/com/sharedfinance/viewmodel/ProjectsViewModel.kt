@@ -1,5 +1,6 @@
 package com.sharedfinance.viewmodel
 
+import android.content.Context
 import com.sharedfinance.data.repository.SharedFinanceRepository
 import com.sharedfinance.model.Project
 import com.sharedfinance.model.ProjectStatus
@@ -17,6 +18,7 @@ import kotlinx.coroutines.launch
 
 data class ProjectsUiState(
     val projects: List<Project> = emptyList(),
+    val pinnedProjectIds: Set<UUID> = emptySet(),
     val projectBalances: Map<UUID, Double> = emptyMap(),
     val isLoading: Boolean = true,
     val searchText: String = "",
@@ -29,10 +31,14 @@ data class ProjectsUiState(
 )
 
 class ProjectsViewModel(
+    context: Context,
     private val repository: SharedFinanceRepository
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val _state = MutableStateFlow(ProjectsUiState())
+    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val _state = MutableStateFlow(
+        ProjectsUiState(pinnedProjectIds = loadPinnedProjectIds())
+    )
     val state: StateFlow<ProjectsUiState> = _state.asStateFlow()
 
     init {
@@ -57,7 +63,8 @@ class ProjectsViewModel(
                 _state.value = _state.value.copy(
                     projects = projects
                         .sortedWith(
-                            compareBy<Project> { it.status == ProjectStatus.ARCHIVED }
+                            compareBy<Project> { it.id !in _state.value.pinnedProjectIds }
+                                .thenBy { it.status == ProjectStatus.ARCHIVED }
                                 .thenByDescending { it.updatedAt.time }
                         ),
                     projectBalances = projectBalances,
@@ -152,9 +159,46 @@ class ProjectsViewModel(
         }
     }
 
+    fun togglePinned(projectId: UUID) {
+        val updatedPinned = if (projectId in _state.value.pinnedProjectIds) {
+            _state.value.pinnedProjectIds - projectId
+        } else {
+            _state.value.pinnedProjectIds + projectId
+        }
+
+        savePinnedProjectIds(updatedPinned)
+        _state.value = _state.value.copy(
+            pinnedProjectIds = updatedPinned,
+            projects = _state.value.projects.sortedWith(
+                compareBy<Project> { it.id !in updatedPinned }
+                    .thenBy { it.status == ProjectStatus.ARCHIVED }
+                    .thenByDescending { it.updatedAt.time }
+            )
+        )
+    }
+
     fun deleteProject(projectId: java.util.UUID) {
         scope.launch {
+            if (projectId in _state.value.pinnedProjectIds) {
+                val updatedPinned = _state.value.pinnedProjectIds - projectId
+                savePinnedProjectIds(updatedPinned)
+                _state.value = _state.value.copy(pinnedProjectIds = updatedPinned)
+            }
             repository.deleteProject(projectId)
         }
+    }
+
+    private fun loadPinnedProjectIds(): Set<UUID> {
+        val values = prefs.getStringSet(KEY_PINNED_PROJECT_IDS, emptySet()) ?: emptySet()
+        return values.mapNotNull { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }.toSet()
+    }
+
+    private fun savePinnedProjectIds(ids: Set<UUID>) {
+        prefs.edit().putStringSet(KEY_PINNED_PROJECT_IDS, ids.map { it.toString() }.toSet()).apply()
+    }
+
+    private companion object {
+        const val PREFS_NAME = "shared_finance_settings"
+        const val KEY_PINNED_PROJECT_IDS = "pinned_project_ids"
     }
 }

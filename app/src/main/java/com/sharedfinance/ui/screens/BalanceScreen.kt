@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -22,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,6 +42,7 @@ import com.sharedfinance.ui.utils.asCurrency
 import com.sharedfinance.viewmodel.BalanceFilterOption
 import com.sharedfinance.viewmodel.BalanceSortOption
 import com.sharedfinance.viewmodel.BalanceViewModel
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +51,7 @@ fun BalanceScreen(viewModel: BalanceViewModel) {
     var filtersVisible by rememberSaveable { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
     var filterExpanded by remember { mutableStateOf(false) }
+    var participantToDelete by remember { mutableStateOf<UUID?>(null) }
     val selectedSortLabel = when (state.selectedSort) {
         BalanceSortOption.BALANCE_DESC -> stringResource(R.string.sort_balance_desc)
         BalanceSortOption.BALANCE_ASC -> stringResource(R.string.sort_balance_asc)
@@ -57,6 +62,36 @@ fun BalanceScreen(viewModel: BalanceViewModel) {
         BalanceFilterOption.POSITIVE -> stringResource(R.string.filter_positive)
         BalanceFilterOption.NEGATIVE -> stringResource(R.string.filter_negative)
         BalanceFilterOption.ZERO -> stringResource(R.string.filter_zero)
+    }
+
+    if (participantToDelete != null) {
+        val hasExpenses = participantToDelete?.let(viewModel::participantHasExpenses) == true
+        AlertDialog(
+            onDismissRequest = { participantToDelete = null },
+            title = { Text(stringResource(R.string.delete_participant_title)) },
+            text = {
+                Text(
+                    if (hasExpenses) {
+                        stringResource(R.string.delete_participant_with_expenses_message)
+                    } else {
+                        stringResource(R.string.delete_participant_message)
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    participantToDelete?.let(viewModel::deleteParticipant)
+                    participantToDelete = null
+                }) {
+                    Text(stringResource(R.string.delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { participantToDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 
     Column(
@@ -199,11 +234,21 @@ fun BalanceScreen(viewModel: BalanceViewModel) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.filteredParticipants) { participant ->
                 ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(participant.name, style = MaterialTheme.typography.titleMedium)
-                        Text(stringResource(R.string.contribution_line, participant.contributionAmount.asCurrency()))
-                        Text(stringResource(R.string.total_expense, participant.expenseAmount.asCurrency()))
-                        Text(stringResource(R.string.project_balance, participant.balanceAmount.asCurrency()))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(participant.name, style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.contribution_line, participant.contributionAmount.asCurrency()))
+                            Text(stringResource(R.string.total_expense, participant.expenseAmount.asCurrency()))
+                            Text(stringResource(R.string.project_balance, participant.balanceAmount.asCurrency()))
+                        }
+                        Button(onClick = { participantToDelete = participant.id }) {
+                            Text(stringResource(R.string.delete))
+                        }
                     }
                 }
             }

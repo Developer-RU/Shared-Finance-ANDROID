@@ -51,6 +51,7 @@ class BleManager(
     context: Context
 ) {
     private val logTag = "SharedFinanceBLE"
+    private val scanDurationMs = 10_000L
     private val appContext = context.applicationContext
     private val bluetoothManager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val locationManager = appContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -81,6 +82,7 @@ class BleManager(
     private var connectionInProgress = false
     private var pendingConnectAddress: String? = null
     private var lastConnectRequestElapsedMs: Long = 0L
+    private var negotiatedCentralMtu = DEFAULT_ATT_MTU
     @Volatile private var isNotifySubscriptionActive = false
     private var notifySubscriptionDeferred: CompletableDeferred<Boolean>? = null
     private val ioMutex = Mutex()
@@ -105,6 +107,7 @@ class BleManager(
     private var notificationSendFailureCount = 0
     private var peripheralServerStarted = false
     private var peripheralAdvertisingActive = false
+    private var negotiatedPeripheralMtu = DEFAULT_ATT_MTU
 
     private var responsePayloadProvider: (ByteArray) -> ByteArray = { inbound -> inbound }
     private var lastReportedDeviceCount = 0
@@ -112,6 +115,7 @@ class BleManager(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var unfilteredFallbackRunnable: Runnable? = null
     private var legacyFallbackRunnable: Runnable? = null
+    private var autoStopScanRunnable: Runnable? = null
 
     private val serviceUuid = UUID.fromString("0000A1F0-0000-1000-8000-00805F9B34FB")
     private val transferCharacteristicUuid = UUID.fromString("0000A1F1-0000-1000-8000-00805F9B34FB")
@@ -159,12 +163,6 @@ class BleManager(
             return
         }
 
-        val allowUnknownPeers = _debugStatus.value == "scan_started_unfiltered" ||
-            _debugStatus.value == "scan_started_with_legacy_fallback"
-
-        if (!isRelevantPeer(device = device, advertisedName = advertisedName, serviceUuids = serviceUuids, allowUnknownPeers = allowUnknownPeers)) {
-            return
-        }
         val deviceKey = runCatching { device.address }
             .getOrNull()
             ?.takeIf { it.isNotBlank() }
@@ -181,55 +179,11 @@ class BleManager(
         devicesByAddress[mapped.address] = device
         scanResults[mapped.address] = mapped
         _discoveredDevices.value = scanResults.values
-            .sortedWith(
-                compareByDescending<BleDevice> { discoveryPriority(it.name) }
-                    .thenByDescending { it.signalStrength }
-            )
+            .sortedByDescending { it.signalStrength }
         if (scanResults.size != lastReportedDeviceCount) {
             lastReportedDeviceCount = scanResults.size
             updateDebugStatus("scan_found_${scanResults.size}")
         }
-    }
-
-    private fun discoveryPriority(name: String): Int {
-        val normalized = name.trim().lowercase()
-        return when {
-            normalized.contains("sfinance-ios") -> 2
-            normalized.contains("sfinance") || normalized.contains("sharedfinance") -> 1
-            else -> 0
-        }
-    }
-
-    private fun isRelevantPeer(
-        device: BluetoothDevice,
-        advertisedName: String?,
-        serviceUuids: List<ParcelUuid>?,
-        allowUnknownPeers: Boolean
-    ): Boolean {
-        val normalizedName = (advertisedName ?: runCatching { device.name }.getOrNull() ?: "")
-            .trim()
-            .lowercase()
-
-        if (serviceUuids?.any { it.uuid == serviceUuid } == true) {
-            return true
-        }
-
-        if (normalizedName.contains("sharedfinance") ||
-            normalizedName.contains("sfinance") ||
-            normalizedName.contains("wpnfc") ||
-            normalizedName.contains("iphone") ||
-            normalizedName.contains("ios")
-        ) {
-            return true
-        }
-
-        if (allowUnknownPeers) {
-            // Fallback mode: many iOS devices omit name/service UUID from scan records,
-            // so we surface unknown peers and let the user attempt connection.
-            return true
-        }
-
-        return false
     }
 
     @SuppressLint("MissingPermission")
@@ -257,7 +211,11 @@ class BleManager(
         }
 
         try {
-            ensurePeripheralServerStarted()
+            runCatching { ensurePeripheralServerStarted() }
+                .onFailure {
+                    // Scanning must still work even if peripheral role cannot be started.
+                    updateDebugStatus("server_start_failed_scan_continues")
+                }
             scanResults.clear()
             devicesByAddress.clear()
             lastReportedDeviceCount = 0
@@ -287,19 +245,26 @@ class BleManager(
             scanner.startScan(null, settings, scanCallback)
             updateDebugStatus("scan_started_unfiltered")
             scheduleLegacyFallbackIfNeeded(adapter)
+            scheduleAutoStopScan()
         } catch (_: SecurityException) {
             _isScanning.value = false
             updateDebugStatus("scan_failed_security_exception")
+        } catch (_: IllegalStateException) {
+            _isScanning.value = false
+            updateDebugStatus("scan_failed_illegal_state")
         } catch (_: IllegalArgumentException) {
             _isScanning.value = false
             updateDebugStatus("scan_failed_illegal_argument")
+        } catch (_: Throwable) {
+            _isScanning.value = false
+            updateDebugStatus("scan_failed_unexpected")
         }
     }
 
     private fun isLocationEnabledForBleScan(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+ usually does not require location, but many OEM stacks still depend on system location state.
-            return runCatching { locationManager.isLocationEnabled }.getOrDefault(true)
+            // Do not gate BLE scan on location toggle for Android 12+.
+            return true
         }
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             runCatching { locationManager.isLocationEnabled }.getOrDefault(false)
@@ -313,12 +278,19 @@ class BleManager(
 
     @SuppressLint("MissingPermission")
     fun stopScan() {
+        cancelAutoStopScan()
         cancelUnfilteredFallback()
         cancelLegacyFallback()
         try {
             bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
         } catch (_: SecurityException) {
             // Ignore permission errors; UI state still transitions to stopped.
+        } catch (_: IllegalStateException) {
+            // Some vendor BLE stacks throw IllegalStateException when adapter is transitioning state.
+            updateDebugStatus("scan_stop_failed_illegal_state")
+        } catch (_: Throwable) {
+            // Guard against vendor-specific runtime failures in scanner shutdown.
+            updateDebugStatus("scan_stop_failed_unexpected")
         }
         if (legacyScanStarted) {
             runCatching { bluetoothAdapter?.stopLeScan(legacyLeScanCallback) }
@@ -326,6 +298,22 @@ class BleManager(
         }
         _isScanning.value = false
         updateDebugStatus("scan_stopped")
+    }
+
+    private fun scheduleAutoStopScan() {
+        cancelAutoStopScan()
+        val runnable = Runnable {
+            if (_isScanning.value) {
+                stopScan()
+            }
+        }
+        autoStopScanRunnable = runnable
+        mainHandler.postDelayed(runnable, scanDurationMs)
+    }
+
+    private fun cancelAutoStopScan() {
+        autoStopScanRunnable?.let { mainHandler.removeCallbacks(it) }
+        autoStopScanRunnable = null
     }
 
     @SuppressLint("MissingPermission")
@@ -532,7 +520,7 @@ class BleManager(
         inboundPayloadDeferred = CompletableDeferred()
         resetInboundStateForCentral()
 
-        val chunks = chunk(payload, 180)
+        val chunks = chunk(payload, mtuPayloadChunkSize(negotiatedCentralMtu))
         updateDebugStatus("transfer_chunks_${chunks.size}")
         val totalOutboundPackets = chunks.size + 2
         var ackedOutboundPackets = 0
@@ -766,7 +754,7 @@ class BleManager(
 
     @SuppressLint("MissingPermission")
     private fun sendServerResponse(payload: ByteArray) {
-        val chunks = chunk(payload, 180)
+        val chunks = chunk(payload, mtuPayloadChunkSize(negotiatedPeripheralMtu))
         notifyCentral(encodePacket(PacketType.Start, chunks.size.toUInt(), ByteArray(0)))
         for ((index, chunkData) in chunks.withIndex()) {
             notifyCentral(encodePacket(PacketType.Chunk, index.toUInt(), chunkData))
@@ -789,6 +777,9 @@ class BleManager(
             } catch (_: SecurityException) {
                 // Runtime BLE permissions may still be pending; ignore this callback safely.
                 updateDebugStatus("scan_result_security_exception")
+            } catch (_: Throwable) {
+                // Guard against vendor BLE stack runtime crashes in callback thread.
+                updateDebugStatus("scan_result_unexpected_exception")
             }
         }
 
@@ -832,6 +823,8 @@ class BleManager(
             consumeDiscoveredDevice(device = device, rssi = rssi, advertisedName = null, serviceUuids = null)
         } catch (_: SecurityException) {
             updateDebugStatus("legacy_scan_result_security_exception")
+        } catch (_: Throwable) {
+            updateDebugStatus("legacy_scan_result_unexpected_exception")
         }
     }
 
@@ -852,10 +845,12 @@ class BleManager(
                     ?.trim()
                     ?.uppercase()
                 updateDebugStatus("connect_success")
+                runCatching { gatt.requestMtu(PREFERRED_ATT_MTU) }
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 connectionInProgress = false
                 pendingConnectAddress = null
+                negotiatedCentralMtu = DEFAULT_ATT_MTU
                 transferCharacteristic = null
                 notifyCharacteristic = null
                 isNotifySubscriptionActive = false
@@ -887,6 +882,15 @@ class BleManager(
                         gatt.writeDescriptor(descriptor)
                     }
                 }
+            }
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS && mtu > 0) {
+                negotiatedCentralMtu = mtu
+                updateDebugStatus("connect_mtu_$mtu")
+            } else {
+                updateDebugStatus("connect_mtu_failed_status_$status")
             }
         }
 
@@ -977,6 +981,7 @@ class BleManager(
                     .getOrNull()
                     ?.trim()
                     ?.uppercase()
+                negotiatedPeripheralMtu = DEFAULT_ATT_MTU
                 updateDebugStatus("server_connected")
                 stopScan()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -986,9 +991,17 @@ class BleManager(
                 serverInboundExpectedChunks = null
                 serverInboundReceivedChunks = 0u
                 serverInboundBuffer = ByteArray(0)
+                negotiatedPeripheralMtu = DEFAULT_ATT_MTU
                 _connectedDeviceName.value = null
                 _connectedDeviceAddress.value = null
                 updateDebugStatus("server_disconnected_status_$status")
+            }
+        }
+
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            if (mtu > 0) {
+                negotiatedPeripheralMtu = mtu
+                updateDebugStatus("server_mtu_$mtu")
             }
         }
 
@@ -1178,9 +1191,22 @@ class BleManager(
         return chunks
     }
 
+    private fun mtuPayloadChunkSize(mtu: Int): Int {
+        val safeMtu = if (mtu > 0) mtu else DEFAULT_ATT_MTU
+        val maxCharacteristicBytes = safeMtu - ATT_HEADER_BYTES
+        val maxPayload = maxCharacteristicBytes - PROTOCOL_HEADER_BYTES
+        return maxPayload.coerceIn(MIN_PAYLOAD_CHUNK_BYTES, MAX_PAYLOAD_CHUNK_BYTES)
+    }
+
     companion object {
+        private const val DEFAULT_ATT_MTU = 23
+        private const val PREFERRED_ATT_MTU = 247
+        private const val ATT_HEADER_BYTES = 3
+        private const val PROTOCOL_HEADER_BYTES = 5
+        private const val MIN_PAYLOAD_CHUNK_BYTES = 15
+        private const val MAX_PAYLOAD_CHUNK_BYTES = 180
         private const val CONNECT_DEBOUNCE_MS = 1_200L
-        private const val BLE_ACK_TIMEOUT_MS = 2_500L
-        private const val BLE_ACK_MAX_ATTEMPTS = 3
+        private const val BLE_ACK_TIMEOUT_MS = 4_000L
+        private const val BLE_ACK_MAX_ATTEMPTS = 5
     }
 }

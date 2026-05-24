@@ -13,7 +13,9 @@
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="delete">Delete</string>
+    <string name="rename">Rename</string>
     <string name="edit">Edit</string>
+    <string name="ok">OK</string>
     <string name="archive">Archive</string>
     <string name="open">Open</string>
     <string name="choose">Choose</string>
@@ -47,6 +49,7 @@
     <string name="history_export_conflicts_button">Export conflicts JSON</string>
     <string name="history_export_done">Conflicts exported</string>
     <string name="history_export_error">Unable to export conflicts</string>
+    <string name="open_sync_logs">Open sync logs</string>
 
     <string name="projects_title">Projects</string>
     <string name="project_title">Project title</string>
@@ -67,6 +70,10 @@
 
     <string name="project_not_found">Project not found</string>
     <string name="edit_project">Edit project</string>
+    <string name="delete_project_title">Delete project</string>
+    <string name="project_pin_action">Pin</string>
+    <string name="project_unpin_action">Unpin</string>
+    <string name="delete_project_cascade_message">All project expenses will be deleted. Participants not used in other projects will also be removed.</string>
     <string name="start_editing">Start editing</string>
     <string name="project_edit_title">Edit project</string>
     <string name="project_save_button">Save</string>
@@ -89,6 +96,10 @@
     <string name="participant_name">Name</string>
     <string name="participant_contribution">Contribution</string>
     <string name="add_participant">Add participant</string>
+    <string name="rename_participant">Rename participant</string>
+    <string name="delete_participant_title">Delete participant</string>
+    <string name="delete_participant_message">Delete this participant?</string>
+    <string name="delete_participant_with_expenses_message">This participant has expenses in the project. Deleting will also remove related expenses. Continue?</string>
     <string name="contribution_line">Contribution: %1$s</string>
 
     <string name="expenses_title">Expenses</string>
@@ -98,6 +109,10 @@
     <string name="expense_participant">Participant</string>
     <string name="selected_participant">Selected participant: %1$s</string>
     <string name="add_expense">Add expense</string>
+    <string name="edit_expense">Edit expense</string>
+    <string name="expense_validation_amount_positive">Title is required and amount must be greater than zero.</string>
+    <string name="expense_validation_participant_not_in_project">Unable to update expense for this participant in the selected project.</string>
+    <string name="expense_validation_not_found">Expense not found.</string>
 
     <string name="balance_title">Balance</string>
     <string name="total_contribution">Total contribution: %1$s</string>
@@ -166,13 +181,20 @@
     <string name="sync_state_idle">Idle</string>
     <string name="sync_state_scanning">Scanning...</string>
     <string name="sync_state_scan_stopped">Scan stopped</string>
+    <string name="sync_state_connecting">Connecting...</string>
     <string name="sync_state_connected">Connected</string>
+    <string name="sync_state_transferring">Transferring data...</string>
+    <string name="sync_state_waiting_response">Waiting for response...</string>
     <string name="sync_state_conflicts_detected">%1$d conflicts detected</string>
     <string name="sync_state_preview_ready">Preview ready</string>
     <string name="sync_state_completed">Sync completed</string>
     <string name="sync_state_completed_with_decisions">Sync completed with decisions</string>
     <string name="sync_state_missing_decisions">Choose a decision for every conflict</string>
     <string name="sync_state_transfer_failed">Unable to fetch remote payload</string>
+    <string name="sync_permissions_hint_title">Permissions required</string>
+    <string name="sync_permissions_hint_message">To ensure reliable discovery, grant: %1$s.</string>
+    <string name="sync_permission_nearby_devices">Nearby devices</string>
+    <string name="sync_permission_location">Location</string>
     <string name="sync_decision_progress">Decisions: %1$d/%2$d</string>
     <string name="sync_decision_pending">Decision: not selected</string>
     <string name="sync_decision_local">Decision: keep local</string>
@@ -199,6 +221,29 @@
     <string name="language_pt_br">Portuguese (Brazil)</string>
     <string name="language_ja">Japanese</string>
     <string name="settings_face_id">Face ID</string>
+    <string name="settings_app_lock">App lock</string>
+    <string name="settings_biometric">Biometric authentication</string>
+    <string name="settings_pin_set">Set PIN code</string>
+    <string name="settings_pin_change">Change PIN code</string>
+    <string name="settings_pin_remove">Remove PIN code</string>
+    <string name="settings_pin_dialog_title">PIN code</string>
+    <string name="settings_pin_dialog_message">Enter a 4-8 digit PIN code.</string>
+    <string name="settings_pin_input_label">PIN code</string>
+    <string name="settings_pin_invalid">PIN must be 4-8 digits.</string>
+    <string name="settings_pattern_set">Set pattern lock</string>
+    <string name="settings_pattern_change">Change pattern lock</string>
+    <string name="settings_pattern_remove">Remove pattern lock</string>
+    <string name="settings_pattern_dialog_title">Pattern lock</string>
+    <string name="settings_pattern_dialog_message">Draw a pattern with at least 4 points.</string>
+    <string name="settings_pattern_confirm_message">Draw the same pattern again to confirm.</string>
+    <string name="settings_pattern_invalid">Pattern must contain at least 4 points.</string>
+    <string name="settings_pattern_mismatch">Patterns do not match. Try again.</string>
+    <string name="settings_pattern_clear">Clear pattern</string>
+    <string name="security_unlock_title">Unlock Shared Finance</string>
+    <string name="security_unlock_subtitle">Confirm your identity to continue.</string>
+    <string name="security_unlock_button">Unlock</string>
+    <string name="security_unlock_pin_button">Use PIN code</string>
+    <string name="security_unlock_pattern_button">Use pattern lock</string>
     <string name="settings_export_json">Export JSON</string>
     <string name="settings_import_json">Import JSON</string>
     <string name="settings_export_done">Export completed</string>
