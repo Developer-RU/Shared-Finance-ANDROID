@@ -1,6 +1,6 @@
-# Contributing to Short Finance Android
+# Contributing to Shared-Finance-ANDROID
 
-Thank you for your interest in improving Short Finance for Android.
+Thank you for your interest in improving Shared-Finance-ANDROID.
 
 ## Scope
 

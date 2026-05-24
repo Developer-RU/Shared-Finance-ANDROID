@@ -1,8 +1,8 @@
-# Short Finance Android Documentation
+# Shared-Finance-ANDROID Documentation
 
 ## 1. Product Purpose
 
-Short Finance for Android is an offline-first shared expense tracking application for multiple participants, organized by independent projects.
+Shared-Finance-ANDROID is an offline-first shared expense tracking application for multiple participants, organized by independent projects.
 
 Representative scenarios:
 

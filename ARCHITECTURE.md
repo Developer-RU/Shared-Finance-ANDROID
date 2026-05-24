@@ -1,8 +1,8 @@
-# Short Finance Android Architecture
+# Shared-Finance-ANDROID Architecture
 
 ## Overview
 
-Short Finance Android is designed as an offline-first shared expense tracker with project-level data isolation and selective Bluetooth synchronization.
+Shared-Finance-ANDROID is designed as an offline-first shared expense tracker with project-level data isolation and selective Bluetooth synchronization.
 
 ## Architectural style
 

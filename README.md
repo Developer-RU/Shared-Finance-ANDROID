@@ -1,4 +1,4 @@
-# Short Finance for Android
+# Shared-Finance-ANDROID
 
 Short description: Android app for offline shared expense tracking with project-based accounting and Bluetooth sync.
 
@@ -33,7 +33,7 @@ Offline-first Android app for shared expense tracking between multiple participa
 
 ## Overview
 
-Short Finance is designed for groups that need transparent shared expense accounting without relying on cloud-only infrastructure. The app uses a project-first model to keep contexts separated.
+Shared-Finance-ANDROID is designed for groups that need transparent shared expense accounting without relying on cloud-only infrastructure. The app uses a project-first model to keep contexts separated.
 
 Each project has:
 
@@ -64,7 +64,7 @@ Each project has:
 
 ## Project-Scoped Bluetooth Sync
 
-Short Finance supports selective data transfer by design.
+Shared-Finance-ANDROID supports selective data transfer by design.
 
 Examples:
 
@@ -76,7 +76,7 @@ This model improves practical privacy control while keeping synchronization fast
 
 ## Cross-Platform Compatibility
 
-Short Finance data structures and synchronization payloads are designed to be compatible across platforms.
+Shared-Finance-ANDROID data structures and synchronization payloads are designed to be compatible across platforms.
 
 Supported synchronization scenarios:
 
